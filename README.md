@@ -8,8 +8,8 @@
 |---|---|
 | 卡片检测器（KeycardDetector） | 检测附近的绿卡、蓝卡、红卡，并显示方向和位置 |
 | 击杀提示（KillFeed） | 显示玩家击杀提示，包括击杀者、被击杀者、武器等信息 |
-| Gather Multiplier（ResourceGatherMultiplier） | 资源采集倍率与战利品倍率，Carbon / Oxide 双框架兼容 |
-| Stack Multiplier（StackMultiplier） | 物品堆叠倍率，支持聊天命令实时调整 |
+| 采集倍率（ResourceGatherMultiplier） | 资源采集倍率与战利品倍率，Carbon / Oxide 双框架兼容 |
+| 堆叠倍率（StackMultiplier） | 物品堆叠倍率，支持聊天命令实时调整 |
 | 传送系统（TeleportSystem） | 传送点管理、防卡死、载具同步、地形加载等待 |
 
 ## 下载与安装
