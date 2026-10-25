@@ -17,9 +17,7 @@ jobs:
         run: |
           set -e
           for tag in KeycardDetector-v3.2.0 KillFeed-v3.3.0 ResourceGatherMultiplier-v4.5.0 StackMultiplier-v5.2.0 TeleportSystem-v3.9.0; do
-            file="${tag%%-v*}"
             name="$tag.zip"
-            name="${file}-${tag#*-v}.zip"
             echo "$tag -> $name"
             curl -fsSL "$BASE_URL/$name" -o "/tmp/$name"
             ls -l "/tmp/$name"
