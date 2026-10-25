@@ -1,0 +1,26 @@
+name: import-teleport
+on:
+  push:
+    paths:
+      - .github/workflows/_import_teleport.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import-file:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download source
+        run: |
+          mkdir -p plugins/TeleportSystem
+          curl -fsSL "https://ancient-raleigh-nose-motion.trycloudflare.com/plugins/TeleportSystem/TeleportSystem.cs" -o plugins/TeleportSystem/TeleportSystem.cs
+          wc -c plugins/TeleportSystem/TeleportSystem.cs
+          head -3 plugins/TeleportSystem/TeleportSystem.cs
+      - name: Commit
+        run: |
+          git config user.name "louxiaole"
+          git config user.email "1151488751@qq.com"
+          git add plugins/TeleportSystem/TeleportSystem.cs
+          git commit -m "feat: 添加 TeleportSystem 插件源码"
+          git push
