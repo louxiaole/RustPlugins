@@ -1,0 +1,7 @@
+# 打包产物
+dist/
+
+# 系统文件
+Thumbs.db
+desktop.ini
+.DS_Store
