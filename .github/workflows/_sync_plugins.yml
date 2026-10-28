@@ -10,18 +10,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Probe
+      - name: Download and commit plugin sources
         run: |
-          set -uo pipefail
-          BASE="https://born-footwear-jon-galaxy.trycloudflare.com"
-          : > _diag.txt
-          for n in KillFeed ResourceGatherMultiplier StackMultiplier TeleportSystem KeycardDetector; do
-            code=$(curl -s -o "/tmp/$n.cs" -w '%{http_code}' --http1.1 --retry 3 --retry-all-errors -L "$BASE/$n.cs" || echo ERR)
-            size=$(stat -c%s "/tmp/$n.cs" 2>/dev/null || echo 0)
-            echo "$n code=$code size=$size" >> _diag.txt
-          done
+          set -euo pipefail
+          BASE="https://pushed-martin-cigarette-holland.trycloudflare.com"
+          fetch() {
+            local name="$1"; local size="$2"; local dest="$3"
+            for i in $(seq 1 12); do
+              curl -fsSL --http1.1 --connect-timeout 10 --max-time 60 -o "$dest" "$BASE/$name.cs" || true
+              if [ -f "$dest" ] && [ "$(stat -c%s "$dest")" = "$size" ]; then
+                echo "$name OK $size"; return 0
+              fi
+              sleep 5
+            done
+            echo "$name FAILED"; return 1
+          }
+          mkdir -p plugins/KillFeed plugins/ResourceGatherMultiplier plugins/StackMultiplier plugins/TeleportSystem plugins/KeycardDetector
+          fetch KillFeed 33548 plugins/KillFeed/KillFeed.cs
+          fetch ResourceGatherMultiplier 29535 plugins/ResourceGatherMultiplier/ResourceGatherMultiplier.cs
+          fetch StackMultiplier 18799 plugins/StackMultiplier/StackMultiplier.cs
+          fetch TeleportSystem 146116 plugins/TeleportSystem/TeleportSystem.cs
+          fetch KeycardDetector 24812 plugins/KeycardDetector/KeycardDetector.cs
           git config user.name "louxiaole"
           git config user.email "1151488751@qq.com"
-          git add _diag.txt
-          git commit -m "ci: diag" || true
-          git push || true
+          git rm -f _diag.txt || true
+          git add plugins
+          git commit -m "plugins: update plugin sources to latest versions"
+          git push
