@@ -6,8 +6,8 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("击杀提示", "Custom", "3.3.0")]
-    [Description("显示玩家击杀提示，包括击杀者、被击杀者、武器等信息 (适配最新Rust)")]
+    [Info("KillFeed 击杀提示", "Custom", "3.4.1")]
+    [Description("显示玩家击杀提示，包括击杀者、被击杀者、武器等信息 (适配最新Rust, 区分NPC与玩家)")]
     class KillFeed : RustPlugin
     {
         #region 常量
@@ -186,8 +186,25 @@ namespace Oxide.Plugins
 
         private void Init()
         {
+            MigrateLegacyConfig();
             LoadConfigData();
             permission.RegisterPermission(PERM_ADMIN, this);
+        }
+
+        // 插件名从纯中文改为"英文 中文"后，自动沿用旧配置，避免配置被重置
+        private void MigrateLegacyConfig()
+        {
+            try
+            {
+                string dir = Interface.Oxide.ConfigDirectory;
+                if (string.IsNullOrEmpty(dir)) return;
+
+                string oldPath = System.IO.Path.Combine(dir, "击杀提示.json");
+                string newPath = System.IO.Path.Combine(dir, "KillFeed 击杀提示.json");
+                if (System.IO.File.Exists(oldPath) && !System.IO.File.Exists(newPath))
+                    System.IO.File.Copy(oldPath, newPath);
+            }
+            catch { }
         }
 
         private void OnServerInitialized()
@@ -195,7 +212,7 @@ namespace Oxide.Plugins
             if (configData.Enabled)
             {
                 Puts("========================================");
-                Puts("击杀提示插件 v3.3.0 已加载！(适配最新Rust)");
+                Puts("KillFeed 击杀提示 插件 v3.4.1 已加载！(适配最新Rust)");
                 Puts($"显示模式: {(configData.ShowInChat ? "聊天" : "")}{(configData.ShowInChat && configData.ShowInHud ? "+HUD" : (configData.ShowInHud ? "HUD" : ""))}");
                 Puts("可用命令: /killfeed");
                 Puts("========================================");
@@ -237,7 +254,16 @@ namespace Oxide.Plugins
             var victim = entity as BasePlayer;
             if (victim != null)
             {
-                HandlePlayerDeath(victim, info);
+                // 最新Rust: 科学家等 NPCPlayer 也继承自 BasePlayer，需要先按 NPC 处理
+                if (victim.IsNpc)
+                {
+                    if (configData.ShowNPCKills)
+                        HandleNpcPlayerDeath(victim, info);
+                }
+                else
+                {
+                    HandlePlayerDeath(victim, info);
+                }
                 return;
             }
 
@@ -274,11 +300,26 @@ namespace Oxide.Plugins
 
             if (configData.ShowPlayerKills && attacker is BasePlayer)
             {
+                string killerName = attacker.IsNpc ? GetNpcPlayerName(attacker) : attacker.displayName;
                 string weaponName = configData.ShowWeaponName ? GetWeaponName(info) : null;
                 float distance = configData.ShowDistance ? CalculateDistance(victim, info) : 0f;
-                string message = BuildKillMessage(attacker.displayName, victim.displayName, weaponName, distance);
+                string message = BuildKillMessage(killerName, victim.displayName, weaponName, distance);
                 SendKillMessage(message, attacker, victim);
             }
+        }
+
+        private void HandleNpcPlayerDeath(BasePlayer npc, HitInfo info)
+        {
+            if (npc == null || info == null) return;
+
+            var attacker = GetInitiatorPlayer(info);
+            if (attacker == null || attacker == npc || attacker.IsNpc) return;
+
+            string npcName = GetNpcPlayerName(npc);
+            string weaponName = configData.ShowWeaponName ? GetWeaponName(info) : null;
+            float distance = configData.ShowDistance ? CalculateDistance(npc, info) : 0f;
+            string message = BuildKillMessage(attacker.displayName, npcName, weaponName, distance);
+            SendKillMessage(message, attacker, null);
         }
 
         private void HandleAnimalDeath(BaseCombatEntity animal, HitInfo info)
@@ -635,6 +676,28 @@ namespace Oxide.Plugins
             if (npcName.Contains("wolf")) return "野狼";
             if (npcName.Contains("bear")) return "熊";
             if (npcName.Contains("boar")) return "野猪";
+            return "NPC";
+        }
+
+        // NPCPlayer(科学家/拾荒者等) 继承自 BasePlayer，单独命名避免显示英文预制体名
+        private string GetNpcPlayerName(BasePlayer npc)
+        {
+            if (npc == null) return "NPC";
+
+            // 插件生成的AI虚拟玩家会设置自定义中文名，优先使用
+            if (!string.IsNullOrEmpty(npc.displayName)
+                && npc.displayName.IndexOf("scientist", StringComparison.OrdinalIgnoreCase) < 0
+                && npc.displayName != "NPC")
+                return npc.displayName;
+
+            string prefab = (npc.ShortPrefabName ?? string.Empty).ToLower();
+            if (prefab.Contains("scientist")) return "科学家";
+            if (prefab.Contains("scavenger")) return "拾荒者";
+            if (prefab.Contains("brute")) return "蛮力者";
+            if (prefab.Contains("bandit")) return "土匪";
+            if (prefab.Contains("raider")) return "袭击者";
+            if (prefab.Contains("tunnel")) return "隧道居民";
+            if (!string.IsNullOrEmpty(npc.displayName)) return npc.displayName;
             return "NPC";
         }
 

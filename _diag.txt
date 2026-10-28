@@ -1,5 +1,0 @@
-KillFeed code=530 size=7718
-ResourceGatherMultiplier code=530 size=7718
-StackMultiplier code=530 size=7718
-TeleportSystem code=530 size=7718
-KeycardDetector code=530 size=7718

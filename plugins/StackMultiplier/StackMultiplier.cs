@@ -3,12 +3,11 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using Oxide.Core;
-using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Stack Multiplier", "Custom", "5.2.0")]
-    [Description("物品堆叠倍率插件 - 支持聊天命令实时调整 (适配最新Rust)")]
+    [Info("Stack Multiplier", "Custom", "5.3.0")]
+    [Description("物品堆叠倍率插件 - 支持聊天命令实时调整 (适配最新Rust, 反射兼容 itemList/stackable)")]
     class StackMultiplier : RustPlugin
     {
         #region 字段
@@ -98,7 +97,7 @@ namespace Oxide.Plugins
                 SendReply(player, "/stackinfo - 查看堆叠状态");
                 SendReply(player, "/stackhelp - 堆叠帮助");
                 SendReply(player, "/help1 - 查看堆叠倍率命令");
-                SendReply(player, "==============================");
+                SendReply(player, "================================");
             });
         }
 
@@ -112,7 +111,7 @@ namespace Oxide.Plugins
         private void PrintStatus()
         {
             Puts("========================================");
-            Puts($"Stack Multiplier v5.2.0 已加载 (适配最新Rust)");
+            Puts($"Stack Multiplier v5.3.0 已加载 (适配最新Rust)");
             Puts($"状态: {(config.Enabled ? "启用" : "禁用")}");
             Puts($"堆叠倍率: {config.Multiplier}x");
             Puts($"已缓存: {_vanillaStacks.Count} 个物品");
@@ -271,8 +270,7 @@ namespace Oxide.Plugins
                 _vanillaStacks[def.itemid] = def.stackable;
 
             int vanilla = _vanillaStacks[def.itemid];
-            int next = Mathf.RoundToInt(vanilla * config.Multiplier);
-            if (next < vanilla) next = vanilla;
+            int next = CalcStack(vanilla);
 
             if (next > 0 && next != def.stackable)
             {
@@ -280,6 +278,18 @@ namespace Oxide.Plugins
                 return true;
             }
             return false;
+        }
+
+        // 统一计算堆叠数：以缓存的原始值为基准，避免切换倍率时叠加；同时防止 int 溢出
+        private int CalcStack(int vanilla)
+        {
+            if (vanilla <= 0) return 1;
+            double raw = vanilla * (double)config.Multiplier;
+            if (raw <= 0) return vanilla;
+            if (raw >= int.MaxValue) return int.MaxValue;
+            int next = (int)Math.Round(raw);
+            if (next < vanilla) next = vanilla;
+            return next;
         }
 
         private void RestoreAllVanilla()
@@ -370,8 +380,7 @@ namespace Oxide.Plugins
             int vanilla = GetVanillaStack(item.info);
             if (vanilla <= 1) return null;
 
-            int max = Mathf.RoundToInt(vanilla * config.Multiplier);
-            if (max < vanilla) max = vanilla;
+            int max = CalcStack(vanilla);
             return max > 1 ? (object)max : null;
         }
 
@@ -450,7 +459,8 @@ namespace Oxide.Plugins
 
         private void ReapplyAll()
         {
-            _vanillaStacks.Clear();
+            // 只清理"已处理"标记，保留 _vanillaStacks 中的原版数值
+            // 否则再次设置倍率时会把"已放大后的数值"当作原版值，导致倍率叠加
             _processedItems.Clear();
             TryApplyToAllItems();
         }
@@ -494,7 +504,7 @@ namespace Oxide.Plugins
             SaveConfig();
             if (config.Enabled)
             {
-                TryApplyToAllItems();
+                ReapplyAll();
                 arg.ReplyWith("[堆叠] 插件已启用");
             }
             else

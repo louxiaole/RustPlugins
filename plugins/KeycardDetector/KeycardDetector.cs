@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using Oxide.Core;
 using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("卡片检测器", "Custom", "3.2.0")]
-    [Description("检测附近的绿卡、蓝卡、红卡，并显示方向和位置 (适配最新Rust)")]
+    [Info("KeycardDetector 卡片检测器", "Custom", "3.3.1")]
+    [Description("检测附近的绿卡、蓝卡、红卡，并显示方向和位置 (适配最新Rust, 改用serverEntities避免Unity FindObjects废弃问题)")]
     class KeycardDetector : RustPlugin
     {
         #region 常量
@@ -50,15 +51,32 @@ namespace Oxide.Plugins
 
         private void Init()
         {
+            MigrateLegacyConfig();
             LoadConfigData();
             InitializeCardData();
             permission.RegisterPermission(PERM_ADMIN, this);
         }
 
+        // 插件名从纯中文改为"英文 中文"后，自动沿用旧配置，避免配置被重置
+        private void MigrateLegacyConfig()
+        {
+            try
+            {
+                string dir = Interface.Oxide.ConfigDirectory;
+                if (string.IsNullOrEmpty(dir)) return;
+
+                string oldPath = System.IO.Path.Combine(dir, "卡片检测器.json");
+                string newPath = System.IO.Path.Combine(dir, "KeycardDetector 卡片检测器.json");
+                if (System.IO.File.Exists(oldPath) && !System.IO.File.Exists(newPath))
+                    System.IO.File.Copy(oldPath, newPath);
+            }
+            catch { }
+        }
+
         private void OnServerInitialized()
         {
             Puts("========================================");
-            Puts("卡片检测器插件 v3.2.0 已加载！(适配最新Rust)");
+            Puts("KeycardDetector 卡片检测器 v3.3.1 已加载！(适配最新Rust)");
             Puts($"检测范围: {config.Settings.DetectionRange} 米");
             Puts($"检测间隔: {config.Settings.CheckInterval} 秒");
             Puts($"默认开启: {(config.Settings.AutoStartOnConnect ? "是" : "否")}");
@@ -104,25 +122,33 @@ namespace Oxide.Plugins
             _cardShortnames.Add("keycard_red");
         }
 
-        // 兼容新版 Unity: FindObjectsOfType 已废弃, 改用 FindObjectsByType (带兜底)
-        private static T[] FindObjects<T>() where T : UnityEngine.Object
+        // 最新Rust 已全面弃用 UnityEngine.Object.FindObjectsOfType。
+        // 直接遍历服务器实体表，既避开 Unity API 变更，也避免全场景扫描带来的性能开销。
+        private static List<T> FindNearbyEntities<T>(Vector3 center, float range, int maxCount) where T : BaseEntity
         {
+            var result = new List<T>();
+            if (maxCount <= 0) return result;
+
+            float rangeSqr = range * range;
             try
             {
-                // Unity 2022+: FindObjectsByType<T>(FindObjectsSortMode.None)
-                var mi = typeof(UnityEngine.Object).GetMethod("FindObjectsByType",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
-                if (mi != null && mi.IsGenericMethod)
+                foreach (var networkable in BaseNetworkable.serverEntities)
                 {
-                    var generic = mi.MakeGenericMethod(typeof(T));
-                    // FindObjectsSortMode.None = 0
-                    var result = generic.Invoke(null, new object[] { 0 }) as T[];
-                    if (result != null) return result;
+                    if (result.Count >= maxCount) break;
+
+                    var entity = networkable as T;
+                    if (entity == null) continue;
+
+                    Vector3 pos;
+                    try { pos = entity.transform.position; }
+                    catch { continue; }
+
+                    if ((pos - center).sqrMagnitude > rangeSqr) continue;
+                    result.Add(entity);
                 }
             }
             catch { }
-            // 老版本兜底
-            return UnityEngine.Object.FindObjectsOfType<T>();
+            return result;
         }
 
         // 兼容 StringView (最新Rust ConsoleSystem.Arg.Args 是 StringView[])
@@ -284,7 +310,7 @@ namespace Oxide.Plugins
                         SendReply(player, "你没有权限使用此命令！");
                         return;
                     }
-                    if (args.Length < 2 || !float.TryParse(args[1], out float range) || range <= 0)
+                    if (args.Length < 2 || !float.TryParse(args[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float range) || range <= 0)
                     {
                         SendReply(player, $"用法: /carddetect range <数值>  当前: {config.Settings.DetectionRange}");
                         return;
@@ -300,7 +326,7 @@ namespace Oxide.Plugins
                         SendReply(player, "你没有权限使用此命令！");
                         return;
                     }
-                    if (args.Length < 2 || !float.TryParse(args[1], out float interval) || interval < 1f)
+                    if (args.Length < 2 || !float.TryParse(args[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float interval) || interval < 1f)
                     {
                         SendReply(player, $"用法: /carddetect interval <秒数>  当前: {config.Settings.CheckInterval}");
                         return;
@@ -431,32 +457,21 @@ namespace Oxide.Plugins
 
         private void CheckDroppedCards(Vector3 playerPos, List<CardInfo> foundCards)
         {
-            var rangeSqr = config.Settings.DetectionRange * config.Settings.DetectionRange;
-            var droppedItems = FindObjects<DroppedItem>();
-            if (droppedItems == null || droppedItems.Length == 0) return;
+            var droppedItems = FindNearbyEntities<DroppedItem>(
+                playerPos, config.Settings.DetectionRange, config.Settings.MaxDroppedItemsCheck);
+            if (droppedItems.Count == 0) return;
 
-            int checkedCount = 0;
-            int maxCheck = config.Settings.MaxDroppedItemsCheck;
-
-            for (int i = 0; i < droppedItems.Length && checkedCount < maxCheck; i++)
+            for (int i = 0; i < droppedItems.Count; i++)
             {
                 var droppedItem = droppedItems[i];
-                checkedCount++;
-
-                if (droppedItem == null || droppedItem.item == null) continue;
+                if (droppedItem == null || droppedItem.item == null || droppedItem.item.info == null) continue;
 
                 var item = droppedItem.item;
-                if (item.info == null) continue;
-
                 var shortname = item.info.shortname;
                 if (!_cardShortnames.Contains(shortname)) continue;
 
                 var itemPos = droppedItem.transform.position;
-                var distanceSqr = (itemPos - playerPos).sqrMagnitude;
-
-                if (distanceSqr > rangeSqr) continue;
-
-                var distance = Mathf.Sqrt(distanceSqr);
+                var distance = (itemPos - playerPos).magnitude;
                 var direction = GetDirection(playerPos, itemPos);
 
                 foundCards.Add(new CardInfo
@@ -472,24 +487,18 @@ namespace Oxide.Plugins
 
         private void CheckContainerCards(Vector3 playerPos, List<CardInfo> foundCards)
         {
-            var rangeSqr = config.Settings.ContainerCheckRange * config.Settings.ContainerCheckRange;
-            var containers = FindObjects<LootContainer>();
-            if (containers == null || containers.Length == 0) return;
+            var containers = FindNearbyEntities<LootContainer>(
+                playerPos, config.Settings.ContainerCheckRange, config.Settings.MaxContainersCheck);
+            if (containers.Count == 0) return;
 
-            int checkedCount = 0;
-            int maxCheck = config.Settings.MaxContainersCheck;
-
-            for (int i = 0; i < containers.Length && checkedCount < maxCheck; i++)
+            for (int i = 0; i < containers.Count; i++)
             {
                 var container = containers[i];
-                checkedCount++;
-
                 if (container == null || container.inventory == null) continue;
 
                 var containerPos = container.transform.position;
-                var distanceSqr = (containerPos - playerPos).sqrMagnitude;
-
-                if (distanceSqr > rangeSqr) continue;
+                var distance = (containerPos - playerPos).magnitude;
+                var direction = GetDirection(playerPos, containerPos);
 
                 var items = container.inventory.itemList;
                 if (items == null || items.Count == 0) continue;
@@ -508,9 +517,6 @@ namespace Oxide.Plugins
 
                     var shortname = item.info.shortname;
                     if (!_cardShortnames.Contains(shortname)) continue;
-
-                    var distance = Mathf.Sqrt(distanceSqr);
-                    var direction = GetDirection(playerPos, containerPos);
 
                     foundCards.Add(new CardInfo
                     {
@@ -600,7 +606,7 @@ namespace Oxide.Plugins
             }
         }
 
-        private void OnPlayerDisconnected(BasePlayer player)
+        private void OnPlayerDisconnected(BasePlayer player, string reason)
         {
             if (player != null)
             {
@@ -628,7 +634,7 @@ namespace Oxide.Plugins
                 arg.ReplyWith($"用法: carddetector.range <数值>  当前: {config.Settings.DetectionRange}");
                 return;
             }
-            if (!float.TryParse(arg0, out float range) || range <= 0)
+            if (!float.TryParse(arg0, NumberStyles.Float, CultureInfo.InvariantCulture, out float range) || range <= 0)
             {
                 arg.ReplyWith("数值必须大于 0");
                 return;
@@ -647,7 +653,7 @@ namespace Oxide.Plugins
                 arg.ReplyWith($"用法: carddetector.interval <秒数>  当前: {config.Settings.CheckInterval}");
                 return;
             }
-            if (!float.TryParse(arg0, out float interval) || interval < 1f)
+            if (!float.TryParse(arg0, NumberStyles.Float, CultureInfo.InvariantCulture, out float interval) || interval < 1f)
             {
                 arg.ReplyWith("间隔必须大于等于 1 秒");
                 return;

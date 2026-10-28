@@ -4,12 +4,11 @@ using System.Globalization;
 using System.Reflection;
 using System.Text;
 using Oxide.Core;
-using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Gather Multiplier", "Custom", "4.5.0")]
-    [Description("资源采集倍率及战利品倍率插件 - Carbon/Oxide双框架兼容 - 修复尸体物资二次乘算 (适配最新Rust)")]
+    [Info("Gather Multiplier", "Custom", "4.6.0")]
+    [Description("资源采集倍率及战利品倍率插件 - Carbon/Oxide双框架兼容 - 修复尸体物资二次乘算 (适配最新Rust, 数值溢出保护)")]
     class ResourceGatherMultiplier : RustPlugin
     {
         #region Carbon / Oxide 双框架兼容层
@@ -201,7 +200,7 @@ namespace Oxide.Plugins
         private void OnServerInitialized()
         {
             Puts("========================================");
-            Puts($"Gather Multiplier v4.5.0 已加载 (适配最新Rust)");
+            Puts($"Gather Multiplier v4.6.0 已加载 (适配最新Rust)");
             Puts($"资源倍率: {config.ResourceMultiplier}x ({(config.EnableResourceMultiplier ? "启用" : "禁用")})");
             Puts($"战利品倍率: {config.LootMultiplier}x ({(config.EnableLootMultiplier ? "启用" : "禁用")})");
             Puts("命令: /gather, /loot, /gatherinfo, /gatherhelp");
@@ -222,7 +221,7 @@ namespace Oxide.Plugins
                 SendReply(player, "/gatherinfo - 查看采集状态");
                 SendReply(player, "/gatherhelp - 采集帮助");
                 SendReply(player, "/help2 - 查看采集倍率命令");
-                SendReply(player, "==============================");
+                SendReply(player, "================================");
             });
         }
 
@@ -237,12 +236,13 @@ namespace Oxide.Plugins
 
         #region 资源采集倍率
 
-        private void OnDispenserGather(ResourceDispenser dispenser, BaseEntity entity, Item item)
+        // 最新Rust: OnDispenserGather / OnDispenserBonus 的第二个参数已统一为 BasePlayer
+        private void OnDispenserGather(ResourceDispenser dispenser, BasePlayer entity, Item item)
         {
             ApplyResourceMultiplier(item);
         }
 
-        private void OnDispenserBonus(ResourceDispenser dispenser, BaseEntity entity, Item item)
+        private void OnDispenserBonus(ResourceDispenser dispenser, BasePlayer entity, Item item)
         {
             ApplyResourceMultiplier(item);
         }
@@ -262,20 +262,12 @@ namespace Oxide.Plugins
             ApplyResourceMultiplier(item);
         }
 
-        private void OnCollectiblePickup(CollectibleEntity collectible, BasePlayer player)
+        // 最新Rust: 原 OnCollectiblePickup 已变更为 (CollectibleEntity, BasePlayer, bool) 并且是可覆盖钩子。
+        // 采集后的物资统一在 OnCollectiblePickedup(CollectibleEntity, BasePlayer, Item) 中放大，
+        // 直接修改实际发放的 Item，避免修改 itemList 造成重复拾取时倍率叠加。
+        private void OnCollectiblePickedup(CollectibleEntity collectible, BasePlayer reciever, Item item)
         {
-            if (!config.EnableResourceMultiplier) return;
-            if (collectible?.itemList == null) return;
-
-            foreach (var ia in collectible.itemList)
-            {
-                if (ia?.itemDef == null) continue;
-                if (IsSkullItem(ia.itemDef.shortname)) continue;
-
-                float mult = GetResourceMultiplier(ia.itemDef.shortname);
-                if (Math.Abs(mult - 1f) > 0.001f)
-                    ia.amount = Mathf.RoundToInt(ia.amount * mult);
-            }
+            ApplyResourceMultiplier(item);
         }
 
         private void ApplyResourceMultiplier(Item item)
@@ -287,8 +279,18 @@ namespace Oxide.Plugins
             float mult = GetResourceMultiplier(item.info.shortname);
             if (Math.Abs(mult - 1f) > 0.001f)
             {
-                item.amount = Mathf.RoundToInt(original * mult);
+                item.amount = CalcAmount(original, mult);
             }
+        }
+
+        // 统一计算数量：double 运算 + int 上限保护，避免高倍率下溢出成负数
+        private static int CalcAmount(int original, float mult)
+        {
+            if (original <= 0 || mult <= 0f) return original;
+            double raw = original * (double)mult;
+            if (raw >= int.MaxValue) return int.MaxValue;
+            int next = (int)Math.Round(raw);
+            return next < 1 ? 1 : next;
         }
 
         private float GetResourceMultiplier(string shortname)
@@ -435,7 +437,7 @@ namespace Oxide.Plugins
                 if (item.info.stackable <= 1) continue;
 
                 int cur = item.amount;
-                int next = Mathf.RoundToInt(cur * config.LootMultiplier);
+                int next = CalcAmount(cur, config.LootMultiplier);
                 if (next > cur && next <= item.info.stackable)
                 {
                     item.amount = next;

@@ -8,8 +8,8 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("传送系统", "Custom", "3.9.0")]
-    [Description("传送点管理+防卡死+载具同步+地形加载等待 (v3.9.0: 适配最新Rust, StringView/NetworkableId/estimatedSpeed全反射兼容)")]
+    [Info("TeleportSystem 传送系统", "Custom", "4.0.1")]
+    [Description("传送点管理+防卡死+载具同步+地形加载等待 (v4.0.0: 适配最新Rust, StringView/NetworkableId/estimatedSpeed全反射兼容, 断线状态清理)")]
     class TeleportSystem : RustPlugin
     {
         #region Carbon / Oxide 双框架兼容层
@@ -299,14 +299,32 @@ namespace Oxide.Plugins
 
         private void Init()
         {
+            MigrateLegacyConfig();
             LoadConfigData();
             LoadData();
             permission.RegisterPermission(PERM_ADMIN, this);
         }
 
+        // 插件名从纯中文改为"英文 中文"后，自动沿用旧配置，避免配置被重置
+        // 数据文件按类名保存（DataFileSystem 用的 Name），改名不受影响
+        private void MigrateLegacyConfig()
+        {
+            try
+            {
+                string dir = Interface.Oxide.ConfigDirectory;
+                if (string.IsNullOrEmpty(dir)) return;
+
+                string oldPath = System.IO.Path.Combine(dir, "传送系统.json");
+                string newPath = System.IO.Path.Combine(dir, "TeleportSystem 传送系统.json");
+                if (System.IO.File.Exists(oldPath) && !System.IO.File.Exists(newPath))
+                    System.IO.File.Copy(oldPath, newPath);
+            }
+            catch { }
+        }
+
         private void OnServerInitialized()
         {
-            Puts("传送系统插件 v3.9.0 已加载！(适配最新Rust)");
+            Puts("TeleportSystem 传送系统 v4.0.1 已加载！(适配最新Rust)");
             Puts("命令: /tp 打开传送菜单 | /stuck 防卡死脱困 | /fixvehicle 修复载具无法驾驶");
             Puts("载具同步：传送时自动同步身下的摩托/马/汽车等载具");
             Puts("安全模式：禁用CC+清速度+2.5s无敌期+伤害Hook拦截+4轮复查，防止建筑附近/载具传送即死");
@@ -332,6 +350,24 @@ namespace Oxide.Plugins
                 SendMessage(player, "/help5 - 查看传送系统命令");
                 SendMessage(player, "==============================");
             });
+        }
+
+        private void OnPlayerDisconnected(BasePlayer player, string reason)
+        {
+            if (player == null) return;
+
+            ulong userId = player.userID;
+
+            // 清掉仍在等待的传送定时器，避免断线后定时器访问已销毁的玩家实体
+            if (activeTeleports.TryGetValue(userId, out var teleportTimer))
+            {
+                teleportTimer?.Destroy();
+                activeTeleports.Remove(userId);
+            }
+
+            pendingAddPositions.Remove(userId);
+            _pendingDeathNotice.Remove(userId);
+            _stuckCooldown.Remove(userId);
         }
 
         private void Unload()
