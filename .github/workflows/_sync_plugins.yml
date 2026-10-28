@@ -1,0 +1,32 @@
+name: sync-plugins
+on:
+  push:
+    paths:
+      - '.github/workflows/_sync_plugins.yml'
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and commit plugin sources
+        run: |
+          set -euo pipefail
+          BASE="https://born-footwear-jon-galaxy.trycloudflare.com"
+          mkdir -p plugins/KillFeed plugins/ResourceGatherMultiplier plugins/StackMultiplier plugins/TeleportSystem plugins/KeycardDetector
+          curl -fL --retry 5 --retry-all-errors --retry-delay 3 -o plugins/KillFeed/KillFeed.cs "$BASE/KillFeed.cs"
+          curl -fL --retry 5 --retry-all-errors --retry-delay 3 -o plugins/ResourceGatherMultiplier/ResourceGatherMultiplier.cs "$BASE/ResourceGatherMultiplier.cs"
+          curl -fL --retry 5 --retry-all-errors --retry-delay 3 -o plugins/StackMultiplier/StackMultiplier.cs "$BASE/StackMultiplier.cs"
+          curl -fL --retry 5 --retry-all-errors --retry-delay 3 -o plugins/TeleportSystem/TeleportSystem.cs "$BASE/TeleportSystem.cs"
+          curl -fL --retry 5 --retry-all-errors --retry-delay 3 -o plugins/KeycardDetector/KeycardDetector.cs "$BASE/KeycardDetector.cs"
+          test $(stat -c%s plugins/KillFeed/KillFeed.cs) -eq 33548
+          test $(stat -c%s plugins/ResourceGatherMultiplier/ResourceGatherMultiplier.cs) -eq 29535
+          test $(stat -c%s plugins/StackMultiplier/StackMultiplier.cs) -eq 18799
+          test $(stat -c%s plugins/TeleportSystem/TeleportSystem.cs) -eq 146116
+          test $(stat -c%s plugins/KeycardDetector/KeycardDetector.cs) -eq 24812
+          git config user.name "louxiaole"
+          git config user.email "1151488751@qq.com"
+          git add plugins
+          git commit -m "plugins: update plugin sources"
+          git push
